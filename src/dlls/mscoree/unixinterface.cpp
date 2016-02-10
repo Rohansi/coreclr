@@ -373,6 +373,142 @@ int coreclr_execute_assembly(
     return hr;
 }
 
+extern "C"
+int coreclrex_initialize(
+    const char* exePath,
+    int startupFlags,
+    void** hostHandle)
+{
+    HRESULT hr;
+#ifdef FEATURE_PAL
+    DWORD error = PAL_InitializeCoreCLR(exePath);
+    hr = HRESULT_FROM_WIN32(error);
+
+    // If PAL initialization failed, then we should return right away and avoid
+    // calling any other APIs because they can end up calling into the PAL layer again.
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+#endif
+
+    ReleaseHolder<ICLRRuntimeHost2> host;
+
+    hr = CorHost2::CreateObject(IID_ICLRRuntimeHost2, (void**)&host);
+    IfFailRet(hr);
+
+    hr = host->SetStartupFlags((STARTUP_FLAGS)startupFlags);
+    IfFailRet(hr);
+
+    hr = host->Start();
+    IfFailRet(hr);
+
+    if (SUCCEEDED(hr))
+    {
+        host.SuppressRelease();
+        *hostHandle = host;
+    }
+
+    return hr;
+}
+
+extern "C"
+int coreclrex_shutdown(
+    void* hostHandle)
+{
+    ReleaseHolder<ICLRRuntimeHost2> host(reinterpret_cast<ICLRRuntimeHost2*>(hostHandle));
+
+    HRESULT hr = host->Stop();
+
+#ifdef FEATURE_PAL
+    PAL_Shutdown();
+#endif
+
+    return hr;
+}
+
+extern "C"
+int coreclrex_create_appdomain(
+    void* hostHandle,
+    const char* appDomainFriendlyName,
+    int appDomainFlags,
+    int propertyCount,
+    const char** propertyKeys,
+    const char** propertyValues,
+    unsigned int* domainId)
+{
+    ICLRRuntimeHost2* host = reinterpret_cast<ICLRRuntimeHost2*>(hostHandle);
+
+    ConstWStringHolder appDomainFriendlyNameW = StringToUnicode(appDomainFriendlyName);
+
+    STARTUP_FLAGS startupFlags; // ignored
+    LPCWSTR* propertyKeysWTemp;
+    LPCWSTR* propertyValuesWTemp;
+    ExtractStartupFlagsAndConvertToUnicode(
+        propertyKeys,
+        propertyValues,
+        &propertyCount,
+        &startupFlags,
+        &propertyKeysWTemp,
+        &propertyValuesWTemp);
+
+    ConstWStringArrayHolder propertyKeysW;
+    propertyKeysW.Set(propertyKeysWTemp, propertyCount);
+
+    ConstWStringArrayHolder propertyValuesW;
+    propertyValuesW.Set(propertyValuesWTemp, propertyCount);
+
+    HRESULT hr = host->CreateAppDomainWithManager(
+        appDomainFriendlyNameW,
+        appDomainFlags,
+        NULL,                    // Name of the assembly that contains the AppDomainManager implementation
+        NULL,                    // The AppDomainManager implementation type name
+        propertyCount,
+        propertyKeysW,
+        propertyValuesW,
+        (DWORD *)domainId);
+
+    return hr;
+}
+
+extern "C"
+int coreclrex_unload_appdomain(
+    void* hostHandle,
+    unsigned int domainId,
+    bool waitUntilDone)
+{
+    ICLRRuntimeHost2* host = reinterpret_cast<ICLRRuntimeHost2*>(hostHandle);
+
+    HRESULT hr = host->UnloadAppDomain(domainId, waitUntilDone);
+
+    return hr;
+}
+
+extern "C"
+int coreclrex_create_delegate(
+    void* hostHandle,
+    unsigned int domainId,
+    const char* entryPointAssemblyName,
+    const char* entryPointTypeName,
+    const char* entryPointMethodName,
+    void** delegate)
+{
+    ICLRRuntimeHost2* host = reinterpret_cast<ICLRRuntimeHost2*>(hostHandle);
+
+    ConstWStringHolder entryPointAssemblyNameW = StringToUnicode(entryPointAssemblyName);
+    ConstWStringHolder entryPointTypeNameW = StringToUnicode(entryPointTypeName);
+    ConstWStringHolder entryPointMethodNameW = StringToUnicode(entryPointMethodName);
+
+    HRESULT hr = host->CreateDelegate(
+        domainId,
+        entryPointAssemblyNameW,
+        entryPointTypeNameW,
+        entryPointMethodNameW,
+        (INT_PTR*)delegate);
+
+    return hr;
+}
+
 #ifdef PLATFORM_UNIX
 //
 // Execute a managed assembly with given arguments

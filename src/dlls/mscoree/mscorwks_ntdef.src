@@ -23,6 +23,13 @@ EXPORTS
         coreclr_initialize
         coreclr_shutdown
 
+        ; Extended Unix hosting api
+        coreclrex_initialize
+        coreclrex_shutdown
+        coreclrex_create_appdomain
+        coreclrex_unload_appdomain
+        coreclrex_create_delegate
+
         ; il{d}asm
         MetaDataGetDispenser
         GetMetaDataInternalInterface
